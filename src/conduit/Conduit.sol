@@ -19,6 +19,20 @@ import {
     ChannelKey_slot_ptr
 } from "seaport-types/src/conduit/lib/ConduitConstants.sol";
 
+interface IProtocolDataProvider {
+    function getReserveTokensAddresses(
+        address asset
+    )
+        external
+        view
+        virtual
+        returns (address xTokenAddress, address variableDebtTokenAddress);
+}
+
+interface INToken {
+    function ownerOf(uint256 tokenId) external view virtual returns (address);
+}
+
 /**
  * @title Conduit
  * @author 0age
@@ -34,6 +48,7 @@ import {
 contract Conduit is ConduitInterface, TokenTransferrer {
     // Set deployer as an immutable controller that can update channel statuses.
     address private immutable _controller;
+    address private _protocolDataProvider;
 
     // Track the status of each channel.
     mapping(address => bool) private _channels;
@@ -80,6 +95,14 @@ contract Conduit is ConduitInterface, TokenTransferrer {
     constructor() {
         // Set the deployer as the controller.
         _controller = msg.sender;
+    }
+
+    function initialize(address protocolDataProvider) external {
+        require(
+            _protocolDataProvider == address(0),
+            "Conduit: already initialized"
+        );
+        _protocolDataProvider = protocolDataProvider;
     }
 
     /**
@@ -234,6 +257,26 @@ contract Conduit is ConduitInterface, TokenTransferrer {
             // Ensure that exactly one 721 item is being transferred.
             if (item.amount != 1) {
                 revert InvalidERC721TransferAmount(item.amount);
+            }
+
+            if (_protocolDataProvider != address(0)) {
+                (address xTokenAddress, ) = IProtocolDataProvider(
+                    _protocolDataProvider
+                ).getReserveTokensAddresses(item.token);
+                if (xTokenAddress != address(0)) {
+                    if (
+                        INToken(xTokenAddress).ownerOf(item.identifier) ==
+                        item.from
+                    ) {
+                        _performERC721Transfer(
+                            xTokenAddress,
+                            item.from,
+                            item.to,
+                            item.identifier
+                        );
+                        return;
+                    }
+                }
             }
 
             // Transfer ERC721 token.
